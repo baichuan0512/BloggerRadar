@@ -5,7 +5,6 @@ import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
-import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -68,7 +67,7 @@ class RadarAccessibilityService : AccessibilityService() {
             height = WindowManager.LayoutParams.MATCH_PARENT
         }
         val view = OverlayView(this)
-        view.visibility = View.INVISIBLE
+        view.visibility = INVISIBLE
         wm.addView(view, params)
         windowManager = wm
         overlay = view
@@ -122,7 +121,7 @@ class RadarAccessibilityService : AccessibilityService() {
         if (node == null || !visited.add(node)) return
         try {
             val text = node.text?.toString()
-            if (!text.isNullOrBlank() && node.isVisible) {
+            if (!text.isNullOrBlank() && node.visibleToUser) {
                 val rect = Rect()
                 node.getBoundsInScreen(rect)
                 if (rect.width() > 0 && rect.height() > 0) {

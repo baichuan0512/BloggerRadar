@@ -30,8 +30,8 @@ object ExcelParser {
     private fun parseXls(stream: InputStream): List<String> {
         val out = ArrayList<String>()
         stream.use { ins ->
-            val book = jxl.Workbook.getWorkbook(ins)
-            try {
+            val wb = jxl.Workbook.getWorkbook(ins)
+            wb.use { book ->
                 for (sheet in book.sheets) {
                     for (r in 0 until sheet.rows) {
                         for (c in 0 until sheet.columns) {
@@ -41,8 +41,6 @@ object ExcelParser {
                         }
                     }
                 }
-            } finally {
-                book.close()
             }
         }
         return out

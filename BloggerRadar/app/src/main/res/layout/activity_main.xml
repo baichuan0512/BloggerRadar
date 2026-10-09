@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F6F7FB">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🎯 博主雷达"
+            android:textColor="#111827"
+            android:textSize="26sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="打开小红书时，自动高亮名单里的博主"
+            android:textColor="#6B7280"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:background="#FFFFFF"
+            android:padding="16dp"
+            android:text="状态加载中…"
+            android:textColor="#111827"
+            android:textSize="15sp" />
+
+        <Button
+            android:id="@+id/btnImport"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="16dp"
+            android:backgroundTint="#EF4444"
+            android:text="① 导入 Excel 名单（.xls）"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btnAccessibility"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="12dp"
+            android:backgroundTint="#2563EB"
+            android:text="② 开启无障碍服务"
+            android:textSize="16sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="12dp"
+            android:background="#FFFFFF"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="小红书内实时高亮标记"
+                android:textColor="#111827"
+                android:textSize="15sp" />
+
+            <Switch
+                android:id="@+id/swEnabled"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btnClear"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="12dp"
+            android:backgroundTint="#9CA3AF"
+            android:text="清空名单"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:background="#FEF3C7"
+            android:lineSpacingExtra="4dp"
+            android:padding="14dp"
+            android:text="使用说明：\n1. 表格里的博主昵称请整理成一列或一个区域（空行/空列会自动跳过）\n2. 支持 .xls（Excel 97-2003）；如果是 .xlsx，请用 Excel「另存为」选 .xls\n3. 开启无障碍服务后，打开小红书，名单中的博主昵称会被绿色框高亮\n4. 小红书列表里超长昵称会显示成「xxx…」，本工具已做模糊匹配\n5. 所有数据仅保存在手机本地，不会联网上传"
+            android:textColor="#92400E"
+            android:textSize="13sp" />
+    </LinearLayout>
+</ScrollView>

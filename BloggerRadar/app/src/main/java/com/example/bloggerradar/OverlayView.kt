@@ -9,7 +9,6 @@ import android.graphics.RectF
 import android.view.View
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.min
 
 /**
  * 全屏透明悬浮层：在匹配到的博主昵称位置画 绿色高亮框 + 名字角标
