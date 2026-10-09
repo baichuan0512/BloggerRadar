@@ -122,7 +122,7 @@ class RadarAccessibilityService : AccessibilityService() {
         if (node == null || !visited.add(node)) return
         try {
             val text = node.text?.toString()
-            if (!text.isNullOrBlank() && node.isVisible) {
+            if (!text.isNullOrBlank() && node.isVisibleToUser) {
                 val rect = Rect()
                 node.getBoundsInScreen(rect)
                 if (rect.width() > 0 && rect.height() > 0) {
