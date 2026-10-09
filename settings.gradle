@@ -1,0 +1,2 @@
+rootProject.name = 'BloggerRadar'
+include ':app'
