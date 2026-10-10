@@ -61,11 +61,6 @@ class RadarAccessibilityService : AccessibilityService() {
     /** 统一节拍调度器：有请求立即扫（受节拍限制），无事件时 800ms 兜底扫一次 */
     private val ticker = object : Runnable {
         override fun run() {
-            // 诊断抓取优先
-            if (dumpRequested) {
-                dumpRequested = false
-                dumpNodes()
-            }
             val now = SystemClock.elapsedRealtime()
             if (scanPending || now - lastPeriodicScan >= PERIODIC_MS) {
                 scanPending = false
@@ -89,6 +84,13 @@ class RadarAccessibilityService : AccessibilityService() {
                 overlay?.setMatches(emptyList())
                 currentBlogger = null
             }
+            return
+        }
+        // 诊断抓取：点过「抓取节点」后，等小红书真正到前台（收到它的第一个事件）再抓，
+        // 保证抓到的一定是发现页/当前页的节点树，而不是雷达自己的窗口
+        if (dumpRequested) {
+            dumpRequested = false
+            dumpNodes()
             return
         }
         // 页面切换时立即清掉旧高亮，避免绿框残留盖在错误位置
@@ -224,6 +226,7 @@ class RadarAccessibilityService : AccessibilityService() {
                 val rect = Rect()
                 node.getBoundsInScreen(rect)
                 val cls = node.className?.toString()?.substringAfterLast('.') ?: "?"
+                val vid = node.viewIdResourceName ?: ""
                 val imp = try { node.isImportantForAccessibility } catch (_: Exception) { false }
                 val vis = node.isVisibleToUser
                 val t = (text ?: "").replace("\n", " ").take(80)
@@ -232,6 +235,7 @@ class RadarAccessibilityService : AccessibilityService() {
                     .append('[').append(cls).append("] vis=").append(vis)
                     .append(" imp=").append(imp)
                     .append(" rect=[${rect.left},${rect.top},${rect.right},${rect.bottom}]")
+                if (vid.isNotBlank()) sb.append(" id=").append(vid)
                 if (hasText) sb.append(" text=\"").append(t).append('"')
                 if (hasDesc) sb.append(" desc=\"").append(d).append('"')
                 sb.append('\n')

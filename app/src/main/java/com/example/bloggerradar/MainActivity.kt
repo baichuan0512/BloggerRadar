@@ -102,7 +102,7 @@ class MainActivity : AppCompatActivity() {
             RadarAccessibilityService.dumpRequested = true
             Toast.makeText(
                 this,
-                "正在退回桌面并抓取小红书节点，约1秒后自动弹出分享",
+                "抓取已布好：切到小红书发现页即自动抓取并弹出分享",
                 Toast.LENGTH_SHORT
             ).show()
             // 把本 App 退回后台，让小红书回到前台，确保抓到的是小红书窗口
