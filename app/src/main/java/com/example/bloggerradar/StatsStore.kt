@@ -7,10 +7,16 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 
+/**
+ * 点赞/收藏统计存储（本地 JSON 文件，仅手机本地）
+ * 每条记录：博主、账号、动作(like/collect)、日期(yyyy-MM-dd)、时间戳
+ */
 object StatsStore {
 
     const val ACTION_LIKE = "like"
     const val ACTION_COLLECT = "collect"
+
+    /** 每个博主每个账号每天 点赞+收藏 上限 */
     const val DAILY_LIMIT = 3
 
     private const val FILE = "stats.json"
@@ -43,10 +49,11 @@ object StatsStore {
 
     private fun saveAll(ctx: Context, arr: JSONArray) {
         file(ctx).writeText(arr.toString(0), Charsets.UTF_8)
-        statsCache = arr
+        statsCache = arr   // 写后立即更新缓存，后续读取无需重新读盘
         statsCacheValid = true
     }
 
+    /** 记录一次动作，返回 true=记录成功，false=已达当日上限（不记录） */
     fun record(ctx: Context, blogger: String, account: String, action: String): Boolean {
         val day = today()
         val cur = countFor(ctx, blogger, account, day)
@@ -64,6 +71,7 @@ object StatsStore {
         return true
     }
 
+    /** 某博主某账号某日 已记录的 点赞+收藏 总数 */
     fun countFor(ctx: Context, blogger: String, account: String, day: String): Int {
         val arr = loadAll(ctx)
         var n = 0
@@ -74,14 +82,20 @@ object StatsStore {
         return n
     }
 
+    /** 是否已到当日上限 */
     fun reachedLimit(ctx: Context, blogger: String, account: String, day: String = today()): Boolean =
         countFor(ctx, blogger, account, day) >= DAILY_LIMIT
 
     data class Row(
-        val blogger: String, val account: String, val day: String,
-        val likes: Int, val collects: Int, val total: Int
+        val blogger: String,
+        val account: String,
+        val day: String,
+        val likes: Int,
+        val collects: Int,
+        val total: Int
     )
 
+    /** 按 博主×账号×日期 聚合（升序） */
     fun aggregate(ctx: Context): List<Row> {
         val arr = loadAll(ctx)
         val map = LinkedHashMap<Triple<String, String, String>, Pair<Int, Int>>()
@@ -96,6 +110,7 @@ object StatsStore {
             .map { (k, v) -> Row(k.first, k.second, k.third, v.first, v.second, v.first + v.second) }
     }
 
+    /** 清空全部统计（谨慎调用） */
     fun clear(ctx: Context) {
         saveAll(ctx, JSONArray())
     }

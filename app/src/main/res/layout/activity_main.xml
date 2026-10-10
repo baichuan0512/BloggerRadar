@@ -162,6 +162,23 @@
             android:text="③ 导出 Excel（博主×账号×日期）"
             android:textSize="16sp" />
 
+        <Button
+            android:id="@+id/btnDump"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="12dp"
+            android:backgroundTint="#0EA5E9"
+            android:text="🔍 抓取当前屏幕节点（诊断用）"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="停在小红书发现页，点上面按钮 → 约1秒后自动抓取 → 用微信把生成的 txt 发我，我据此定位发现页作者名在哪里"
+            android:textColor="#64748B"
+            android:textSize="12sp" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

@@ -1,6 +1,7 @@
 package com.example.bloggerradar
 
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -26,6 +27,29 @@ class MainActivity : AppCompatActivity() {
     private lateinit var spinnerAccount: Spinner
     private lateinit var tvToday: TextView
 
+    /** 接收无障碍服务抓取完成的广播，拿到文件路径后弹分享 */
+    private val dumpDoneReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: Intent?) {
+            if (intent?.action != RadarAccessibilityService.ACTION_DUMP_DONE) return
+            val path = intent.getStringExtra("path") ?: ""
+            val count = intent.getIntExtra("count", 0)
+            if (path.isBlank()) {
+                Toast.makeText(
+                    this@MainActivity,
+                    "未抓到小红书窗口：请先打开小红书发现页，再点抓取",
+                    Toast.LENGTH_LONG
+                ).show()
+                return
+            }
+            Toast.makeText(
+                this@MainActivity,
+                "已抓取 $count 个文字节点，请在弹窗里选「微信」发送",
+                Toast.LENGTH_LONG
+            ).show()
+            shareDump(java.io.File(path))
+        }
+    }
+
     private val filePicker =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             uri ?: return@registerForActivityResult
@@ -45,6 +69,7 @@ class MainActivity : AppCompatActivity() {
         val btnClear = findViewById<Button>(R.id.btnClear)
         val btnAddAccount = findViewById<Button>(R.id.btnAddAccount)
         val btnExport = findViewById<Button>(R.id.btnExport)
+        val btnDump = findViewById<Button>(R.id.btnDump)
 
         btnImport.setOnClickListener {
             filePicker.launch(arrayOf("*/*"))
@@ -69,11 +94,38 @@ class MainActivity : AppCompatActivity() {
 
         btnExport.setOnClickListener { exportExcel() }
 
+        btnDump.setOnClickListener {
+            if (!isServiceEnabled()) {
+                Toast.makeText(this, "请先开启无障碍服务再抓取", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            RadarAccessibilityService.dumpRequested = true
+            Toast.makeText(
+                this,
+                "正在退回桌面并抓取小红书节点，约1秒后自动弹出分享",
+                Toast.LENGTH_SHORT
+            ).show()
+            // 把本 App 退回后台，让小红书回到前台，确保抓到的是小红书窗口
+            moveTaskToBack(true)
+        }
+
         swEnabled.setOnCheckedChangeListener { _: CompoundButton, checked: Boolean ->
             Prefs.setEnabled(this, checked)
         }
 
         setupAccountSpinner()
+        registerReceiver(
+            dumpDoneReceiver,
+            IntentFilter(RadarAccessibilityService.ACTION_DUMP_DONE)
+        )
+    }
+
+    override fun onDestroy() {
+        try {
+            unregisterReceiver(dumpDoneReceiver)
+        } catch (_: Exception) {
+        }
+        super.onDestroy()
     }
 
     override fun onResume() {
@@ -217,6 +269,22 @@ class MainActivity : AppCompatActivity() {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         startActivity(Intent.createChooser(intent, "导出 Excel 到"))
+    }
+
+    /** 把诊断节点文件通过系统分享（选微信）发出去 */
+    private fun shareDump(file: java.io.File) {
+        val uri: Uri = FileProvider.getUriForFile(
+            this,
+            "$packageName.fileprovider",
+            file
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, "博主雷达节点侦察")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(intent, "发送节点文件到"))
     }
 
     private fun isServiceEnabled(): Boolean {
