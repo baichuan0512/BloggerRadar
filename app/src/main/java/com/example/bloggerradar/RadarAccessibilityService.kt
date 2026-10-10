@@ -14,16 +14,20 @@ import android.widget.Toast
 
 /**
  * 无障碍服务：监听小红书(com.xingin.xhs)界面，
- * 扫描所有窗口的文字，与名单匹配后用悬浮层高亮；
- * 通过「点赞成功/收藏成功」提示气泡 + 点击事件双通道统计（每账号每日上限3次）
+ * 扫描所有「活跃」窗口的文字，与名单匹配后用悬浮层高亮；
+ * 统计双通道：屏幕上的「点赞成功/收藏成功」气泡 + 点击事件（每账号每日上限3次）
+ *
+ * 性能设计：所有扫描统一走 200ms 节拍调度器（最高每秒5次），
+ * 且每次扫描有节点数上限，避免拖慢小红书
  */
 class RadarAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val XHS_PACKAGE = "com.xingin.xhs"
-        private const val SCAN_DELAY_MS = 150L
-        private const val PERIODIC_MS = 500L
+        private const val TICK_MS = 200L          // 调度器节拍
+        private const val PERIODIC_MS = 800L      // 无事件时的兜底扫描间隔
         private const val RECORD_DEBOUNCE_MS = 3000L
+        private const val MAX_NODES = 3000        // 单次扫描节点数上限（防卡顿）
         private const val SUCCESS_LIKE = "点赞成功"
         private const val SUCCESS_COLLECT = "收藏成功"
     }
@@ -35,22 +39,30 @@ class RadarAccessibilityService : AccessibilityService() {
     /** 当前屏幕上处于详情页/卡片的作者（取最靠上的命中），用于给点赞收藏归类 */
     private var currentBlogger: String? = null
     private var lastRecordAt = 0L
-    private var lastEventScanAt = 0L
 
-    private val scanRunnable = Runnable { scanScreen() }
+    private var scanPending = false
+    private var lastPeriodicScan = 0L
 
-    /** 周期扫描兜底：详情页/发现页加载完后可能不再发事件，靠定时器保证高亮及时出现 */
-    private val periodicRunnable = object : Runnable {
+    /** 扫描过程中发现的「成功气泡」动作，扫描结束后统一处理 */
+    private var pendingAction: String? = null
+
+    /** 统一节拍调度器：有请求立即扫（受节拍限制），无事件时 800ms 兜底扫一次 */
+    private val ticker = object : Runnable {
         override fun run() {
-            scanScreen()
-            handler.postDelayed(this, PERIODIC_MS)
+            val now = SystemClock.elapsedRealtime()
+            if (scanPending || now - lastPeriodicScan >= PERIODIC_MS) {
+                scanPending = false
+                lastPeriodicScan = now
+                scanScreen()
+            }
+            handler.postDelayed(this, TICK_MS)
         }
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         addOverlay()
-        handler.postDelayed(periodicRunnable, PERIODIC_MS)
+        handler.postDelayed(ticker, TICK_MS)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -65,6 +77,7 @@ class RadarAccessibilityService : AccessibilityService() {
         // 页面切换时立即清掉旧高亮，避免绿框残留盖在错误位置
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             overlay?.setMatches(emptyList())
+            scanPending = true
         }
         // 通道1：点击事件（部分机型/控件有效）
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
@@ -72,15 +85,8 @@ class RadarAccessibilityService : AccessibilityService() {
         }
         // 通道2：事件自带文本里出现「点赞成功/收藏成功」提示气泡
         detectSuccessText(event.text)
-        // 立即扫描（150ms 节流），另有 500ms 周期扫描兜底
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastEventScanAt >= 150L) {
-            lastEventScanAt = now
-            scanScreen()
-        } else {
-            handler.removeCallbacks(scanRunnable)
-            handler.postDelayed(scanRunnable, SCAN_DELAY_MS)
-        }
+        // 请求扫描（由节拍调度器合并执行）
+        scanPending = true
     }
 
     override fun onInterrupt() {
@@ -123,17 +129,17 @@ class RadarAccessibilityService : AccessibilityService() {
         windowManager = null
     }
 
-    /** 从事件文本里识别「点赞成功/收藏成功」，命中即记录（带去抖防重复计数） */
+    /** 从事件文本里识别「点赞成功/收藏成功」 */
     private fun detectSuccessText(texts: List<CharSequence>?) {
         texts ?: return
         for (t in texts) {
             val s = t?.toString() ?: continue
             if (s.contains(SUCCESS_COLLECT)) {
-                recordAction(StatsStore.ACTION_COLLECT)
+                tryRecord(StatsStore.ACTION_COLLECT)
                 return
             }
             if (s.contains(SUCCESS_LIKE)) {
-                recordAction(StatsStore.ACTION_LIKE)
+                tryRecord(StatsStore.ACTION_LIKE)
                 return
             }
         }
@@ -152,7 +158,7 @@ class RadarAccessibilityService : AccessibilityService() {
                 else -> null
             }
             if (action != null) {
-                recordAction(action)
+                tryRecord(action)
                 cur.recycle()
                 return
             }
@@ -164,7 +170,7 @@ class RadarAccessibilityService : AccessibilityService() {
         cur?.recycle()
     }
 
-    private fun recordAction(action: String) {
+    private fun tryRecord(action: String) {
         val blogger = currentBlogger ?: return
         val now = SystemClock.elapsedRealtime()
         if (now - lastRecordAt < RECORD_DEBOUNCE_MS) return // 同一次操作的提示可能停留几秒，去抖
@@ -172,7 +178,7 @@ class RadarAccessibilityService : AccessibilityService() {
         val account = Prefs.currentAccount(this)
         val ok = StatsStore.record(this, blogger, account, action)
         if (ok) {
-            scanScreen()
+            scanPending = true
             val verb = if (action == StatsStore.ACTION_LIKE) "赞" else "藏"
             Toast.makeText(applicationContext, "已记${verb}：$blogger（$account）", Toast.LENGTH_SHORT).show()
         } else {
@@ -194,34 +200,43 @@ class RadarAccessibilityService : AccessibilityService() {
             return
         }
 
+        pendingAction = null
         val matches = ArrayList<OverlayView.Match>()
         val visited = HashSet<AccessibilityNodeInfo>()
-        var anyMatchWindow = false
+        val budget = intArrayOf(MAX_NODES)
+        var foundXhs = false
 
-        // 扫描所有窗口（发现页瀑布流可能在独立窗口层，rootInActiveWindow 拿不到）
+        // 只扫「活跃」窗口：避免扫到已退出页面残留的旧窗口（鬼影的来源）
         val roots = ArrayList<AccessibilityNodeInfo>()
         try {
             for (w in windows) {
+                if (!w.isActive) continue
                 w.root?.let { roots.add(it) }
             }
         } catch (_: Exception) {
         }
         val active = rootInActiveWindow
-        if (active != null && roots.none { it.packageName == active.packageName && it == active }) {
+        if (active != null && roots.none { it == active }) {
             roots.add(active)
         }
-        if (roots.isEmpty()) {
-            view.setMatches(emptyList())
-            return
+
+        var screenW = 1
+        var screenH = 1
+        try {
+            screenW = view.width.coerceAtLeast(1)
+            screenH = view.height.coerceAtLeast(1)
+        } catch (_: Exception) {
         }
+
         for (root in roots) {
             if (root.packageName != XHS_PACKAGE) continue
-            anyMatchWindow = true
-            collect(root, names, matches, visited)
+            foundXhs = true
+            collect(root, names, matches, visited, budget, screenW, screenH)
         }
-        if (!anyMatchWindow) {
+        if (!foundXhs) {
             view.setMatches(emptyList())
             currentBlogger = null
+            pendingAction = null
             return
         }
 
@@ -240,6 +255,10 @@ class RadarAccessibilityService : AccessibilityService() {
         // 当前博主 = 最靠上的命中（详情页作者通常在顶部）
         currentBlogger = withWarn.minByOrNull { it.rect.top }?.name
         view.setMatches(withWarn)
+
+        // 扫描中发现了成功气泡 → 记录统计
+        pendingAction?.let { tryRecord(it) }
+        pendingAction = null
     }
 
     /** 深度优先遍历节点树，收集「文本/描述命中名单且可见」的节点屏幕坐标 */
@@ -247,23 +266,38 @@ class RadarAccessibilityService : AccessibilityService() {
         node: AccessibilityNodeInfo?,
         names: List<String>,
         out: MutableList<OverlayView.Match>,
-        visited: MutableSet<AccessibilityNodeInfo>
+        visited: MutableSet<AccessibilityNodeInfo>,
+        budget: IntArray,
+        screenW: Int,
+        screenH: Int
     ) {
-        if (node == null || !visited.add(node)) return
+        if (node == null || budget[0] <= 0) return
+        if (!visited.add(node)) return
+        budget[0]--
         try {
             // 同时检查 text 与 contentDescription（发现页卡片作者名常在 contentDescription 里）
             val candidates = listOfNotNull(
                 node.text?.toString(),
                 node.contentDescription?.toString()
             )
-            if (node.isVisibleToUser) {
-                for (raw in candidates) {
-                    if (raw.isNullOrBlank()) continue
-                    // 「点赞成功/收藏成功」气泡不参与高亮
-                    if (raw.contains(SUCCESS_LIKE) || raw.contains(SUCCESS_COLLECT)) continue
-                    val rect = Rect()
-                    node.getBoundsInScreen(rect)
-                    if (rect.width() > 0 && rect.height() > 0) {
+            if (candidates.isNotEmpty() && node.isVisibleToUser) {
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
+                // 只保留屏幕内的有效矩形（过滤屏幕外/退化节点，去鬼影）
+                val onScreen = rect.top < screenH && rect.bottom > 0 &&
+                        rect.left < screenW && rect.right > 0 &&
+                        rect.width() >= 20 && rect.height() >= 10
+                if (onScreen) {
+                    for (raw in candidates) {
+                        if (raw.isNullOrBlank()) continue
+                        if (raw.contains(SUCCESS_LIKE)) {
+                            pendingAction = StatsStore.ACTION_LIKE
+                            continue
+                        }
+                        if (raw.contains(SUCCESS_COLLECT)) {
+                            pendingAction = StatsStore.ACTION_COLLECT
+                            continue
+                        }
                         val hit = names.firstOrNull { Matcher.isMatch(raw, it) } ?: continue
                         out.add(OverlayView.Match(hit, rect))
                         break
@@ -271,7 +305,8 @@ class RadarAccessibilityService : AccessibilityService() {
                 }
             }
             for (i in 0 until node.childCount) {
-                collect(node.getChild(i), names, out, visited)
+                if (budget[0] <= 0) break
+                collect(node.getChild(i), names, out, visited, budget, screenW, screenH)
             }
         } catch (_: Exception) {
             // 个别节点可能已失效，忽略
