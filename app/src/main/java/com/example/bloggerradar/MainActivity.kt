@@ -71,6 +71,13 @@ class MainActivity : AppCompatActivity() {
         val btnExport = findViewById<Button>(R.id.btnExport)
         val btnDump = findViewById<Button>(R.id.btnDump)
 
+        // 版本号直接显示在副标题上，一眼确认装的是不是新包
+        val tvSubtitle = findViewById<TextView>(R.id.tvSubtitle)
+        val ver = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+        } catch (_: Exception) { "?" }
+        tvSubtitle.text = "打开小红书时，自动高亮名单里的博主 · v$ver"
+
         btnImport.setOnClickListener {
             filePicker.launch(arrayOf("*/*"))
         }
