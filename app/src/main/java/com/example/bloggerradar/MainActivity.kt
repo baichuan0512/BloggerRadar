@@ -166,7 +166,7 @@ class MainActivity : AppCompatActivity() {
                 }
             )
             append("\n💡 当前账号：")
-            append(Prefs.currentAccount(this))
+            append(Prefs.currentAccount(this@MainActivity))
         }
     }
 
