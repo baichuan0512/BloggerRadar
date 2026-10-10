@@ -68,8 +68,8 @@ class RadarAccessibilityService : AccessibilityService() {
     /** 判断被点击的节点（含祖先）是不是 赞/收藏 按钮，是则记录统计 */
     private fun handleClick(node: AccessibilityNodeInfo?) {
         var cur = node
-        repeat(4) {
-            if (cur == null) return
+        var depth = 0
+        while (cur != null && depth < 4) {
             val desc = (cur.text?.toString() ?: "") + (cur.contentDescription?.toString() ?: "")
             val action = when {
                 desc.contains("取消收藏") || desc.contains("取消赞") || desc.contains("取消点赞") -> null // 取消，不统计
@@ -85,6 +85,7 @@ class RadarAccessibilityService : AccessibilityService() {
             val parent = cur.parent
             cur.recycle()
             cur = parent
+            depth++
         }
         // 遍历完未命中也要回收最后一个节点，避免 AccessibilityNodeInfo 泄漏
         cur?.recycle()
