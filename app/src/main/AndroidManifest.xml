@@ -15,6 +15,17 @@
             </intent-filter>
         </activity>
 
+        <!-- 用于把导出的 Excel 通过微信等分享出去 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/provider_paths" />
+        </provider>
+
         <!-- 无障碍服务：读取小红书界面文字，用于识别博主名单 -->
         <service
             android:name=".RadarAccessibilityService"
