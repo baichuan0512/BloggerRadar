@@ -1,8 +1,10 @@
 package com.example.bloggerradar
 
+import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.TextUtils
@@ -21,6 +23,11 @@ import androidx.core.content.FileProvider
 import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        /** 构建标记：每次改代码后 +1，装完在副标题上一眼确认是不是新包 */
+        const val BUILD_TAG = "b3"
+    }
 
     private lateinit var tvStatus: TextView
     private lateinit var swEnabled: Switch
@@ -58,6 +65,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 兜底：任何未捕获异常都写一份堆栈到 files/crash.txt，方便定位闪退
+        installCrashHandler()
+
         setContentView(R.layout.activity_main)
 
         tvStatus = findViewById(R.id.tvStatus)
@@ -76,7 +87,7 @@ class MainActivity : AppCompatActivity() {
         val ver = try {
             packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
         } catch (_: Exception) { "?" }
-        tvSubtitle.text = "打开小红书时，自动高亮名单里的博主 · v$ver"
+        tvSubtitle.text = "打开小红书时，自动高亮名单里的博主 · v$ver ($BUILD_TAG)"
 
         btnImport.setOnClickListener {
             filePicker.launch(arrayOf("*/*"))
@@ -121,10 +132,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         setupAccountSpinner()
-        registerReceiver(
-            dumpDoneReceiver,
-            IntentFilter(RadarAccessibilityService.ACTION_DUMP_DONE)
-        )
+
+        // Android 14 (targetSdk 34) 起，注册非系统广播必须显式声明是否对外导出，
+        // 否则直接抛 SecurityException 导致一打开 App 就闪退。这个广播只在本应用内收发，
+        // 用 RECEIVER_NOT_EXPORTED。
+        val dumpFilter = IntentFilter(RadarAccessibilityService.ACTION_DUMP_DONE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(dumpDoneReceiver, dumpFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(dumpDoneReceiver, dumpFilter)
+        }
     }
 
     override fun onDestroy() {
@@ -140,6 +157,22 @@ class MainActivity : AppCompatActivity() {
         refreshStatus()
         refreshToday()
         syncAccountSpinner()
+    }
+
+    /** 把未捕获异常的堆栈落到 files/crash.txt */
+    private fun installCrashHandler() {
+        val def = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            try {
+                val dir = getExternalFilesDir(null) ?: filesDir
+                val f = java.io.File(dir, "crash.txt")
+                val ts = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.CHINA)
+                    .format(java.util.Date())
+                f.writeText("time=$ts\nthread=${t.name}\n\n" + android.util.Log.getStackTraceString(e))
+            } catch (_: Throwable) {
+            }
+            def?.uncaughtException(t, e)
+        }
     }
 
     private fun setupAccountSpinner() {
