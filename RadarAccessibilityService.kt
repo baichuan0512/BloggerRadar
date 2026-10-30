@@ -18,6 +18,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.HashSet
 import java.util.Locale
+import kotlin.math.abs
 
 /**
  * 无障碍服务：监听小红书(com.xingin.xhs)界面，
@@ -26,6 +27,11 @@ import java.util.Locale
  *
  * 性能设计：所有扫描统一走 200ms 节拍调度器（最高每秒5次），
  * 且每次扫描有节点数上限，避免拖慢小红书
+ *
+ * === 发现页（瀑布流）支持说明 ===
+ * v1.1 起：命中的昵称节点会向上寻找「网格卡片」祖先，把整张封面卡片框起来。
+ * 卡片判定完全不依赖列数，靠「父容器里有 >=2 个宽度接近的兄弟节点」来判断，
+ * 所以双瀑布、三瀑布、单列都能自适应。
  */
 class RadarAccessibilityService : AccessibilityService() {
 
@@ -34,9 +40,15 @@ class RadarAccessibilityService : AccessibilityService() {
         private const val TICK_MS = 200L          // 调度器节拍
         private const val PERIODIC_MS = 800L      // 无事件时的兜底扫描间隔
         private const val RECORD_DEBOUNCE_MS = 3000L
-        private const val MAX_NODES = 3000        // 单次扫描节点数上限（防卡顿）
+        private const val MAX_NODES = 6000        // 单次扫描节点数上限（防卡顿）
         private const val SUCCESS_LIKE = "点赞成功"
         private const val SUCCESS_COLLECT = "收藏成功"
+
+        /** 卡片宽度占屏幕宽度的有效区间（三瀑布约 0.30，双瀑布约 0.47） */
+        private const val CARD_MIN_W_RATIO = 0.18f
+        private const val CARD_MAX_W_RATIO = 0.80f
+        /** 兄弟节点宽度差在这个比例内就算「同一列的卡片」 */
+        private const val SIBLING_W_TOLERANCE = 0.15f
 
         /** 诊断：MainActivity 置 true，服务在下一拍抓取节点树并广播结果 */
         const val ACTION_DUMP_DONE = "com.example.bloggerradar.ACTION_DUMP_DONE"
@@ -174,7 +186,7 @@ class RadarAccessibilityService : AccessibilityService() {
 
             val visited = HashSet<AccessibilityNodeInfo>()
             val counter = intArrayOf(0)
-            val budget = intArrayOf(6000)
+            val budget = intArrayOf(8000)
             for (root in roots) {
                 val pkg = root.packageName?.toString()
                 sb.append("\n----- 窗口 root: package=").append(pkg).append(" -----\n")
@@ -303,7 +315,7 @@ class RadarAccessibilityService : AccessibilityService() {
             val verb = if (action == StatsStore.ACTION_LIKE) "赞" else "藏"
             Toast.makeText(applicationContext, "已记${verb}：$blogger（$account）", Toast.LENGTH_SHORT).show()
         } else {
-            Toast.makeText(applicationContext, "「$blogger」今日($account)已达3次上限", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "「$blogger」今日($account)已达3次上限", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -347,6 +359,12 @@ class RadarAccessibilityService : AccessibilityService() {
             screenW = view.width.coerceAtLeast(1)
             screenH = view.height.coerceAtLeast(1)
         } catch (_: Exception) {
+        }
+        // 悬浮层还没测量出来时用真实屏幕尺寸兜底，否则卡片判定会全部失效
+        if (screenW <= 1 || screenH <= 1) {
+            val dm = resources.displayMetrics
+            screenW = dm.widthPixels.coerceAtLeast(1)
+            screenH = dm.heightPixels.coerceAtLeast(1)
         }
 
         for (root in roots) {
@@ -406,7 +424,10 @@ class RadarAccessibilityService : AccessibilityService() {
                 node.text?.toString(),
                 node.contentDescription?.toString()
             )
-            if (candidates.isNotEmpty() && node.isVisibleToUser) {
+            // 注意：这里不再用 isVisibleToUser 做硬过滤。
+            // 小红书瀑布流的卡片在 RecyclerView 里滚动时，这个标志经常短暂为 false，
+            // 一旦过滤掉，发现页就整片扫不到，只剩详情页能命中。改为只信屏幕坐标。
+            if (candidates.isNotEmpty()) {
                 val rect = Rect()
                 node.getBoundsInScreen(rect)
                 // 只保留屏幕内的有效矩形（过滤屏幕外/退化节点，去鬼影）
@@ -425,7 +446,9 @@ class RadarAccessibilityService : AccessibilityService() {
                             continue
                         }
                         val hit = names.firstOrNull { Matcher.isMatch(raw, it) } ?: continue
-                        out.add(OverlayView.Match(hit, rect))
+                        // 发现页：向上找网格卡片，把整张封面框起来；详情页/其他场景保持原样
+                        val target = cardRectFor(node, rect, screenW, screenH)
+                        out.add(OverlayView.Match(hit, target))
                         break
                     }
                 }
@@ -438,6 +461,107 @@ class RadarAccessibilityService : AccessibilityService() {
             // 个别节点可能已失效，忽略
         } finally {
             node.recycle()
+        }
+    }
+
+    /**
+     * 从命中的昵称节点向上找「瀑布流卡片」容器，返回卡片矩形；找不到就返回昵称自身矩形。
+     *
+     * 判定卡片不靠写死列数，而是靠结构特征：某一级祖先的宽度占屏 18%~80%，
+     * 且它的父容器里存在 >=2 个宽度几乎相同的兄弟 —— 这就是网格里的一张卡片。
+     * 因此双瀑布（≈47%）、三瀑布（≈31%）、甚至单列都能自动适配。
+     *
+     * 往上遇到宽度 > 80% 的祖先（整行/整屏）立即停止，避免把详情页顶栏整条框进去。
+     */
+    private fun cardRectFor(
+        node: AccessibilityNodeInfo,
+        selfRect: Rect,
+        screenW: Int,
+        screenH: Int
+    ): Rect {
+        var cur: AccessibilityNodeInfo? = try {
+            node.parent
+        } catch (_: Exception) {
+            null
+        }
+        var depth = 0
+        try {
+            while (depth < 5) {
+                val mine = cur ?: return selfRect
+                cur = null // 所有权移交给 mine，下面统一回收
+                val r = Rect()
+                var isCard = false
+                try {
+                    mine.getBoundsInScreen(r)
+                    val wRatio = r.width().toFloat() / screenW
+                    if (wRatio > CARD_MAX_W_RATIO || r.height() > screenH * 0.9f) {
+                        // 已经到整屏/整行了，没必要再往上
+                        return selfRect
+                    }
+                    if (wRatio >= CARD_MIN_W_RATIO && r.height() > selfRect.height() * 1.4f) {
+                        isCard = isGridItem(mine, r)
+                    }
+                    // 先把下一跳拿到手，再回收当前节点
+                    cur = try {
+                        mine.parent
+                    } catch (_: Exception) {
+                        null
+                    }
+                } catch (_: Exception) {
+                } finally {
+                    try {
+                        mine.recycle()
+                    } catch (_: Exception) {
+                    }
+                }
+                if (isCard) return r
+                depth++
+            }
+            return selfRect
+        } finally {
+            try {
+                cur?.recycle()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** 该节点是否为网格中的一张卡片：父容器里至少 2 个宽度接近的兄弟 */
+    private fun isGridItem(item: AccessibilityNodeInfo, itemRect: Rect): Boolean {
+        val targetW = itemRect.width()
+        if (targetW <= 0) return false
+        var parent: AccessibilityNodeInfo? = null
+        try {
+            val p: AccessibilityNodeInfo = item.parent ?: return false
+            parent = p
+            var similar = 0
+            val n = p.childCount
+            for (i in 0 until n) {
+                var c: AccessibilityNodeInfo? = null
+                try {
+                    val child: AccessibilityNodeInfo = p.getChild(i) ?: continue
+                    c = child
+                    val cr = Rect()
+                    child.getBoundsInScreen(cr)
+                    if (cr.width() > 0 && abs(cr.width() - targetW) <= targetW * SIBLING_W_TOLERANCE) {
+                        similar++
+                    }
+                } catch (_: Exception) {
+                } finally {
+                    try {
+                        c?.recycle()
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+            return similar >= 2
+        } catch (_: Exception) {
+            return false
+        } finally {
+            try {
+                parent?.recycle()
+            } catch (_: Exception) {
+            }
         }
     }
 }
